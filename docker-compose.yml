@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
+      POSTGRES_DB: gateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      args:
+        TARGET: api
+    environment:
+      APP_ENV: development
+      HTTP_PORT: "8080"
+      DATABASE_URL: postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      ADMIN_TOKEN: change-me
+      SECRET_ENC_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      PLATFORM_FEE_BPS: "200"
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      args:
+        TARGET: worker
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      SECRET_ENC_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      # Must match the API: reconciliation recomputes the fee the capture path
+      # booked, so a different rate here would report a false discrepancy.
+      PLATFORM_FEE_BPS: "200"
+      WEBHOOK_WORKERS: "5"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+volumes:
+  pgdata:

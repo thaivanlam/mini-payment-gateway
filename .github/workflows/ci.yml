@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  GO_VERSION: "1.22"
+  COVERAGE_THRESHOLD: "70"
+  DOMAIN_COVERAGE_THRESHOLD: "85"
+
+jobs:
+  lint:
+    name: Lint and vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-ed:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.60
+
+  test:
+    name: Unit tests and coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests with the race detector
+        run: go test ./... -race -covermode=atomic
+
+      # The domain package holds the state machine and the money rules and is
+      # pure Go, so it is held to a higher bar than the codebase as a whole.
+      - name: Enforce the domain coverage threshold
+        run: |
+          go test ./internal/domain/... -coverprofile=domain.out -covermode=atomic
+          domain=$(go tool cover -func=domain.out | awk '/^total:/ {print substr($3, 1, length($3)-1)}')
+          echo "domain coverage: ${domain}%"
+          awk -v t="$domain" -v min="$DOMAIN_COVERAGE_THRESHOLD" \
+            'BEGIN { if (t+0 < min+0) { printf "domain coverage %.1f%% is below the %s%% threshold\n", t, min; exit 1 } }'
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: gateway
+          POSTGRES_PASSWORD: gateway
+          POSTGRES_DB: gateway
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U gateway -d gateway"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Coverage is measured here, over the unit and integration tests together:
+      # the service, repository and transport layers are exercised through real
+      # Postgres and Redis, so a unit-only number would understate them badly.
+      - name: Run integration tests against real Postgres and Redis
+        env:
+          DATABASE_URL: postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable
+          REDIS_URL: redis://localhost:6379/1
+          ADMIN_TOKEN: test-admin-token
+          SECRET_ENC_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+        run: |
+          go test ./... ./test/integration/... \
+            -tags=integration -race -count=1 \
+            -coverpkg=./internal/... -coverprofile=coverage.out -covermode=atomic
+
+      - name: Enforce the overall coverage threshold
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print substr($3, 1, length($3)-1)}')
+          echo "total coverage: ${total}%"
+          awk -v t="$total" -v min="$COVERAGE_THRESHOLD" \
+            'BEGIN { if (t+0 < min+0) { printf "coverage %.1f%% is below the %s%% threshold\n", t, min; exit 1 } }'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the api image
+        run: docker build --build-arg TARGET=api -t mini-payment-gateway:api .
+
+      - name: Build the worker image
+        run: docker build --build-arg TARGET=worker -t mini-payment-gateway:worker .
+
+      - name: Report the image size
+        run: docker images mini-payment-gateway --format "{{.Repository}}:{{.Tag}} {{.Size}}"
