@@ -1,0 +1,15 @@
+# build output
+/bin/
+
+# generated settlement reports (the directory itself is kept)
+/reports/*
+!/reports/.gitkeep
+
+# local secrets
+.env
+
+# coverage
+coverage.out
+combined.out
+domain.out
+coverage.html

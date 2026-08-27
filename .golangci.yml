@@ -1,0 +1,40 @@
+run:
+  timeout: 5m
+  build-tags:
+    - integration
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosimple
+    - bodyclose
+    - errorlint
+    - misspell
+    - revive
+    - gosec
+    - noctx
+
+linters-settings:
+  errorlint:
+    errorf: true
+  revive:
+    rules:
+      - name: exported
+        disabled: false
+  gosec:
+    excludes:
+      # G404: math/rand is used for jitter and for the acquirer simulator only,
+      # never for anything security-relevant.
+      - G404
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+        - noctx
