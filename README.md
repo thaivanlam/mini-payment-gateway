@@ -17,6 +17,8 @@ It is deliberately small in features and deliberately strict about three things 
 - [Numbers](#numbers)
 - [Project layout](#project-layout)
 - [What I would do next](#what-i-would-do-next)
+- [Learning path](docs/learning-path.md) — a guided reading order for the codebase
+- [Code reading order](docs/code-reading-order.md) — the same route function by function, with dependencies
 
 ---
 
